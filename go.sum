@@ -1,0 +1,6 @@
+github.com/amsokol/go-grib2 v0.0.0-20251125074255-9715f3659685 h1:YXz1EZQ/fSX60sQjEh6Q4GMxCWRJ4sH298GilNxB4P8=
+github.com/amsokol/go-grib2 v0.0.0-20251125074255-9715f3659685/go.mod h1:AelIgaUzWq4Tfyzb/8KRpda5t98bD2Fpttgon6cpugo=
+github.com/nilsmagnus/grib v1.2.8 h1:H7ch/1/agaCqM3MC8hW1Ft+EJ+q2XB757uml/IfPvp4=
+github.com/nilsmagnus/grib v1.2.8/go.mod h1:XHm+5zuoOk0NSIWaGmA3JaAxI4i50YvD1L1vz+aqPOQ=
+github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
+github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
