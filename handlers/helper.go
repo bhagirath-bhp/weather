@@ -114,6 +114,23 @@ func ExtractUVFromGrib(gribPath string) (WindHeader, []float64, []float64, error
 	return header, uData, vData, nil
 }
 
+// writeWind encodes resp to the response and, for debugging, also mirrors
+// it to {metDir}/debug-{refTime}.json via MultiWriter (single pass, no
+// double marshal). Debug write failures are ignored — they must not break
+// the request.
+func writeWind(w http.ResponseWriter, metDir string, resp WindResponse, maxAge int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", maxAge))
+
+	var dest io.Writer = w
+	debugPath := filepath.Join(metDir, "debug-"+resp.Header.RefTime+".json")
+	if f, err := os.Create(debugPath); err == nil {
+		defer f.Close()
+		dest = io.MultiWriter(w, f)
+	}
+	json.NewEncoder(dest).Encode(resp)
+}
+
 func ServeWeather(metDir string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		date := r.PathValue("date")
@@ -136,9 +153,7 @@ func ServeWeather(metDir string) http.HandlerFunc {
 			return
 		}
 		header.RefTime = date
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Cache-Control", "public, max-age=3600")
-		json.NewEncoder(w).Encode(WindResponse{Header: header, U: u, V: v})
+		writeWind(w, metDir, WindResponse{Header: header, U: u, V: v}, 3600)
 	}
 }
 
@@ -155,9 +170,7 @@ func ServeCurrentWeather(metDir string) http.HandlerFunc {
 				continue
 			}
 			header.RefTime = c.Date + c.Cycle
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("Cache-Control", "public, max-age=600")
-			json.NewEncoder(w).Encode(WindResponse{Header: header, U: u, V: v})
+			writeWind(w, metDir, WindResponse{Header: header, U: u, V: v}, 600)
 			return
 		}
 		http.Error(w, "no recent cycle available", http.StatusServiceUnavailable)
