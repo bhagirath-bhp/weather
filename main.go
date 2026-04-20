@@ -16,7 +16,7 @@ func main() {
 	metDir := "/home/loki/useful/projects/weather/_ignore_/metfiles/"
 	http.HandleFunc("/weather/{date}", handlers.ServeWeather(metDir))
 	http.HandleFunc("/weather/current", handlers.ServeCurrentWeather(metDir))
-	http.Handle("/", http.FileServer(http.Dir("./web")))
+	http.Handle("/web", http.FileServer(http.Dir("./web")))
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
