@@ -1,0 +1,10 @@
+{
+  "functions": {
+    "api/**/*.go": {
+      "runtime": "vercel-community/go@1.0.0"
+    }
+  },
+  "rewrites": [
+    { "source": "/weather/:path", "destination": "/api/weather?path=:path" }
+  ]
+}

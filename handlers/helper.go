@@ -32,7 +32,33 @@ func DownloadMet(date string, metDir string) (string, error) {
 	return downloadMetCycle(date, "00", metDir)
 }
 
+// isValidDate returns true only for exactly 8-digit strings (YYYYMMDD).
+// This prevents path traversal and SSRF when date is user-supplied.
+func isValidDate(s string) bool {
+	if len(s) != 8 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidCycle returns true for the four known GDAS cycle values.
+func isValidCycle(s string) bool {
+	switch s {
+	case "00", "06", "12", "18":
+		return true
+	}
+	return false
+}
+
 func downloadMetCycle(date, cycle, metDir string) (string, error) {
+	if !isValidDate(date) || !isValidCycle(cycle) {
+		return "", fmt.Errorf("invalid date %q or cycle %q", date, cycle)
+	}
 	filePath := filepath.Join(metDir, date+cycle)
 	if fi, err := os.Stat(filePath); err == nil && fi.Size() > 0 {
 		return filePath, nil
@@ -123,7 +149,14 @@ func writeWind(w http.ResponseWriter, metDir string, resp WindResponse, maxAge i
 	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", maxAge))
 
 	var dest io.Writer = w
-	debugPath := filepath.Join(metDir, "debug-"+resp.Header.RefTime+".json")
+	// Sanitise refTime to alphanumerics only before embedding it in a file path.
+	safeRef := make([]byte, 0, len(resp.Header.RefTime))
+	for _, c := range resp.Header.RefTime {
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+			safeRef = append(safeRef, byte(c))
+		}
+	}
+	debugPath := filepath.Join(metDir, "debug-"+string(safeRef)+".json")
 	if f, err := os.Create(debugPath); err == nil {
 		defer f.Close()
 		dest = io.MultiWriter(w, f)
@@ -133,9 +166,18 @@ func writeWind(w http.ResponseWriter, metDir string, resp WindResponse, maxAge i
 
 func ServeWeather(metDir string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// r.PathValue is populated by Go's built-in mux (local dev).
+		// On Vercel, dynamic path segments are passed as query parameters.
 		date := r.PathValue("date")
 		if date == "" {
+			date = r.URL.Query().Get("date")
+		}
+		if date == "" {
 			http.Error(w, "missing date", http.StatusBadRequest)
+			return
+		}
+		if !isValidDate(date) {
+			http.Error(w, "date must be 8 digits (YYYYMMDD)", http.StatusBadRequest)
 			return
 		}
 		path, err := DownloadMet(date, metDir)

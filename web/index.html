@@ -53,6 +53,8 @@
     <canvas id="flow"></canvas>
   </div>
   <div class="hud" id="hud"><b>wind · v0.1</b> — loading…</div>
+  <!-- topojson-client for decoding world-atlas borders -->
+  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
   <script>
     "use strict";
 
@@ -64,7 +66,6 @@
 
     const DPR = Math.max(1, window.devicePixelRatio || 1);
     let W = 0, H = 0, R = 0, cx = 0, cy = 0;
-
     function resize() {
       const cw = window.innerWidth, ch = window.innerHeight;
       for (const c of [globe, flow]) {
@@ -112,6 +113,40 @@
       return { lat, lon: ((lon + 540) % 360) - 180 };
     }
 
+    // ---- country borders ----------------------------------------------------
+    // countryBorders: GeoJSON MultiLineString decoded from world-atlas topojson.
+    let countryBorders = null;
+
+    async function loadCountries() {
+      try {
+        const topo = await fetch(
+          "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json"
+        ).then(r => r.json());
+        // mesh() with no filter returns all edges (coastlines + borders).
+        countryBorders = topojson.mesh(topo, topo.objects.countries);
+        drawGlobe();
+      } catch (e) {
+        console.warn("country borders load failed:", e);
+      }
+    }
+
+    function drawCountries() {
+      if (!countryBorders) return;
+      gctx.strokeStyle = "rgba(180, 210, 255, 0.55)";
+      gctx.lineWidth = 0.6;
+      for (const ring of countryBorders.coordinates) {
+        gctx.beginPath();
+        let pen = false;
+        for (const [lon, lat] of ring) {
+          const p = project(lat, lon);
+          if (!p.visible) { pen = false; continue; }
+          if (!pen) { gctx.moveTo(p.x, p.y); pen = true; }
+          else gctx.lineTo(p.x, p.y);
+        }
+        gctx.stroke();
+      }
+    }
+
     // ---- globe + graticule --------------------------------------------------
     function drawGlobe() {
       gctx.clearRect(0, 0, W, H);
@@ -125,7 +160,10 @@
       for (let lat = -80; lat <= 80; lat += 20) drawLatLine(lat);
       for (let lon = -180; lon < 180; lon += 20) drawLonLine(lon);
 
+      drawCountries();
+
       gctx.strokeStyle = "rgba(120, 160, 220, 0.55)";
+      gctx.lineWidth = 1;
       gctx.beginPath();
       gctx.arc(cx, cy, R, 0, Math.PI * 2);
       gctx.stroke();
@@ -286,6 +324,7 @@
 
     // ---- kickoff ------------------------------------------------------------
     resize();
+    loadCountries();
     loadWind();
     tick();
   </script>
