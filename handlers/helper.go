@@ -56,10 +56,21 @@ func isValidCycle(s string) bool {
 }
 
 func downloadMetCycle(date, cycle, metDir string) (string, error) {
-	if !isValidDate(date) || !isValidCycle(cycle) {
-		return "", fmt.Errorf("invalid date %q or cycle %q", date, cycle)
+	// Validate inputs and reconstruct them from non-tainted values to break
+	// CodeQL's data-flow chain from user-supplied request parameters.
+	t, err := time.Parse("20060102", date)
+	if err != nil {
+		return "", fmt.Errorf("invalid date %q: %w", date, err)
 	}
-	filePath := filepath.Join(metDir, date+cycle)
+	safeDate := t.Format("20060102")
+
+	safeCycleMap := map[string]string{"00": "00", "06": "06", "12": "12", "18": "18"}
+	safeCycle, ok := safeCycleMap[cycle]
+	if !ok {
+		return "", fmt.Errorf("invalid cycle %q", cycle)
+	}
+
+	filePath := filepath.Join(metDir, safeDate+safeCycle)
 	if fi, err := os.Stat(filePath); err == nil && fi.Size() > 0 {
 		return filePath, nil
 	}
@@ -67,7 +78,7 @@ func downloadMetCycle(date, cycle, metDir string) (string, error) {
 		return "", err
 	}
 	template := "https://nomads.ncep.noaa.gov/cgi-bin/filter_gdas_0p25.pl?dir=/gdas.%s/%s/atmos&file=gdas.t%sz.pgrb2.0p25.f000&var_UGRD=on&var_VGRD=on&lev_10_m_above_ground=on"
-	url := fmt.Sprintf(template, date, cycle, cycle)
+	url := fmt.Sprintf(template, safeDate, safeCycle, safeCycle)
 	resp, err := http.Get(url)
 	if err != nil {
 		return "", err
