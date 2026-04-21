@@ -1,5 +1,10 @@
 {
-  "rewrites": [
-    { "source": "/weather/:path*", "destination": "/api/weather?path=:path*" }
+  "builds": [
+    { "src": "api/weather.go", "use": "@vercel/go" },
+    { "src": "index.html", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/weather/(.*)", "dest": "/api/weather?path=$1" },
+    { "src": "/", "dest": "/index.html" }
   ]
 }
