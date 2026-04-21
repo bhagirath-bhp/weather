@@ -1,5 +1,6 @@
 {
   "rewrites": [
-    { "source": "/weather/:path*", "destination": "/api/weather?path=:path*" }
+    { "source": "/weather/:path*", "destination": "/api/weather?path=:path*" },
+    { "source": "/", "destination": "/public/index.html" }
   ]
 }
