@@ -1,4 +1,8 @@
 {
+  "builds": [
+    { "src": "api/weather.go", "use": "@vercel/go" },
+    { "src": "public/**", "use": "@vercel/static" }
+  ],
   "rewrites": [
     { "source": "/weather/:path*", "destination": "/api/weather?path=:path*" }
   ]
