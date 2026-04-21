@@ -19,7 +19,13 @@ func main() {
 	}
 	http.HandleFunc("/weather/{date}", handlers.ServeWeather(metDir))
 	http.HandleFunc("/weather/current", handlers.ServeCurrentWeather(metDir))
-	http.Handle("/", http.FileServer(http.Dir("./public")))
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		http.ServeFile(w, r, "./index.html")
+	})
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
