@@ -2,11 +2,12 @@ package handler
 
 import (
 	"net/http"
+	"os"
 
 	"bhagirath-bhp/weather/handlers"
 )
 
-const metDir = "/tmp/metfiles/"
+var metDir = os.Getenv("MET_DIR")
 
 // Handler is the Vercel serverless entry-point for all /weather/* requests.
 //

@@ -1,334 +1,522 @@
 <!doctype html>
 <html lang="en">
-
-<head>
-  <meta charset="utf-8">
-  <title>wind · v0.1</title>
-  <style>
-    html,
-    body {
-      margin: 0;
-      height: 100%;
-      background: #000;
-      overflow: hidden;
-    }
-
-    .stage {
-      position: fixed;
-      inset: 0;
-    }
-
-    canvas {
-      position: absolute;
-      inset: 0;
-    }
-
-    #flow {
-      cursor: grab;
-    }
-
-    #flow.dragging {
-      cursor: grabbing;
-    }
-
-    .hud {
-      position: fixed;
-      left: 12px;
-      bottom: 12px;
-      font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
-      color: #8ab0e6;
-      pointer-events: none;
-      text-shadow: 0 1px 0 rgba(0, 0, 0, 0.8);
-    }
-
-    .hud b {
-      color: #cfe0ff;
-    }
-  </style>
-</head>
-
-<body>
-  <div class="stage">
-    <canvas id="globe"></canvas>
-    <canvas id="flow"></canvas>
-  </div>
-  <div class="hud" id="hud"><b>wind · v0.1</b> — loading…</div>
-  <!-- topojson-client for decoding world-atlas borders -->
-  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
-  <script>
-    "use strict";
-
-    const globe = document.getElementById("globe");
-    const flow = document.getElementById("flow");
-    const hud = document.getElementById("hud");
-    const gctx = globe.getContext("2d");
-    const fctx = flow.getContext("2d");
-
-    const DPR = Math.max(1, window.devicePixelRatio || 1);
-    let W = 0, H = 0, R = 0, cx = 0, cy = 0;
-
-    function resize() {
-      const cw = window.innerWidth, ch = window.innerHeight;
-      for (const c of [globe, flow]) {
-        c.width = cw * DPR;
-        c.height = ch * DPR;
-        c.style.width = cw + "px";
-        c.style.height = ch + "px";
-        c.getContext("2d").setTransform(DPR, 0, 0, DPR, 0, 0);
+  <head>
+    <meta charset="utf-8" />
+    <title>wind · v0.1</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        overflow: hidden;
       }
-      W = cw; H = ch;
-      R = Math.min(W, H) * 0.45 * zoom;
-      cx = W / 2; cy = H / 2;
-      drawGlobe();
-    }
-    window.addEventListener("resize", resize);
 
-    // ---- orthographic projection -------------------------------------------
-    // Rotation: rotL (longitude spin), rotP (latitude tilt, clamped to ±π/2).
-    // Zoom: multiplier on base radius; 1 = default, clamped on wheel.
-    let rotL = 0, rotP = 0, zoom = 1;
+      .stage {
+        position: fixed;
+        inset: 0;
+      }
 
-    function project(lat, lon) {
-      const lamb = lon * Math.PI / 180 + rotL;
-      const phi = lat * Math.PI / 180;
-      const cosP = Math.cos(phi);
-      const x = cosP * Math.sin(lamb);
-      const y = Math.sin(phi);
-      const z = cosP * Math.cos(lamb);
-      const sp = Math.sin(rotP), cp = Math.cos(rotP);
-      const y2 = cp * y - sp * z;
-      const z2 = sp * y + cp * z;
-      return { x: cx + R * x, y: cy - R * y2, visible: z2 > 0 };
-    }
+      canvas {
+        position: absolute;
+        inset: 0;
+      }
 
-    function unproject(px, py) {
-      const sx = (px - cx) / R, sy = -(py - cy) / R;
-      const rho2 = sx * sx + sy * sy;
-      if (rho2 > 1) return null;
-      const z2 = Math.sqrt(1 - rho2);
-      const sp = Math.sin(rotP), cp = Math.cos(rotP);
-      const y = cp * sy + sp * z2;
-      const z = -sp * sy + cp * z2;
-      const lat = Math.asin(y) * 180 / Math.PI;
-      const lon = (Math.atan2(sx, z) - rotL) * 180 / Math.PI;
-      return { lat, lon: ((lon + 540) % 360) - 180 };
-    }
+      #flow {
+        cursor: grab;
+      }
 
-    // ---- country borders ----------------------------------------------------
-    // countryBorders: GeoJSON MultiLineString decoded from world-atlas topojson.
-    let countryBorders = null;
+      #flow.dragging {
+        cursor: grabbing;
+      }
 
-    async function loadCountries() {
-      try {
-        const topo = await fetch(
-          "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json"
-        ).then(r => r.json());
-        // mesh() with no filter returns all edges (coastlines + borders).
-        countryBorders = topojson.mesh(topo, topo.objects.countries);
+      .hud {
+        position: fixed;
+        left: 12px;
+        bottom: 12px;
+        font:
+          12px/1.4 ui-monospace,
+          Menlo,
+          Consolas,
+          monospace;
+        color: #8ab0e6;
+        pointer-events: none;
+        text-shadow: 0 1px 0 rgba(0, 0, 0, 0.8);
+      }
+
+      .hud b {
+        color: #cfe0ff;
+      }
+
+      .panel {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        padding: 12px 14px;
+        background: rgba(10, 22, 40, 0.78);
+        border: 1px solid rgba(120, 160, 220, 0.22);
+        color: #cfe0ff;
+        font:
+          12px/1.45 ui-monospace,
+          Menlo,
+          Consolas,
+          monospace;
+        backdrop-filter: blur(4px);
+        min-width: 220px;
+      }
+
+      .panel h4 {
+        margin: 0 0 8px;
+        font-size: 11px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: #8ab0e6;
+        font-weight: 600;
+      }
+
+      .panel .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 6px 0;
+      }
+
+      .panel label {
+        flex: 0 0 70px;
+        color: #8ab0e6;
+      }
+
+      .panel input[type="date"],
+      .panel button {
+        background: rgba(120, 160, 220, 0.1);
+        color: #cfe0ff;
+        border: 1px solid rgba(120, 160, 220, 0.3);
+        padding: 3px 8px;
+        font: inherit;
+        border-radius: 2px;
+      }
+
+      .panel input[type="date"] {
+        flex: 1;
+        color-scheme: dark;
+      }
+
+      .panel button {
+        cursor: pointer;
+      }
+
+      .panel button:hover {
+        background: rgba(120, 160, 220, 0.22);
+      }
+
+      .panel input[type="range"] {
+        flex: 1;
+        accent-color: #8ab0e6;
+      }
+
+      .panel .val {
+        flex: 0 0 44px;
+        text-align: right;
+        color: #cfe0ff;
+      }
+
+      .panel hr {
+        border: 0;
+        border-top: 1px solid rgba(120, 160, 220, 0.18);
+        margin: 10px 0;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="stage">
+      <canvas id="globe"></canvas>
+      <canvas id="flow"></canvas>
+    </div>
+    <div class="hud" id="hud"><b>wind · v0.1</b> — loading…</div>
+    <div class="panel">
+      <h4>cycle</h4>
+      <div class="row">
+        <input type="date" id="date" />
+        <button id="load">load</button>
+      </div>
+      <div class="row">
+        <button id="loadCurrent" style="flex:1">latest available</button>
+      </div>
+      <hr />
+      <h4>particles</h4>
+      <div class="row">
+        <label>count</label>
+        <input type="range" id="count" min="1000" max="60000" step="1000" value="27000" />
+        <span class="val" id="countVal">27000</span>
+      </div>
+      <div class="row">
+        <label>speed</label>
+        <input type="range" id="speed" min="0.001" max="0.02" step="0.0005" value="0.005" />
+        <span class="val" id="speedVal">0.0050</span>
+      </div>
+      <div class="row">
+        <label>trail</label>
+        <input type="range" id="fade" min="0.80" max="0.99" step="0.01" value="0.93" />
+        <span class="val" id="fadeVal">0.93</span>
+      </div>
+      <div class="row">
+        <label>max age</label>
+        <input type="range" id="age" min="20" max="300" step="10" value="130" />
+        <span class="val" id="ageVal">130</span>
+      </div>
+    </div>
+    <!-- topojson-client for decoding world-atlas borders -->
+    <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
+    <script>
+      "use strict";
+
+      const globe = document.getElementById("globe");
+      const flow = document.getElementById("flow");
+      const hud = document.getElementById("hud");
+      const gctx = globe.getContext("2d");
+      const fctx = flow.getContext("2d");
+
+      const DPR = Math.max(1, window.devicePixelRatio || 1);
+      let W = 0,
+        H = 0,
+        R = 0,
+        cx = 0,
+        cy = 0;
+
+      function resize() {
+        const cw = window.innerWidth,
+          ch = window.innerHeight;
+        for (const c of [globe, flow]) {
+          c.width = cw * DPR;
+          c.height = ch * DPR;
+          c.style.width = cw + "px";
+          c.style.height = ch + "px";
+          c.getContext("2d").setTransform(DPR, 0, 0, DPR, 0, 0);
+        }
+        W = cw;
+        H = ch;
+        R = Math.min(W, H) * 0.45 * zoom;
+        cx = W / 2;
+        cy = H / 2;
         drawGlobe();
-      } catch (e) {
-        console.warn("country borders load failed:", e);
       }
-    }
+      window.addEventListener("resize", resize);
 
-    function drawCountries() {
-      if (!countryBorders) return;
-      gctx.strokeStyle = "rgba(180, 210, 255, 0.55)";
-      gctx.lineWidth = 0.6;
-      for (const ring of countryBorders.coordinates) {
+      // ---- orthographic projection -------------------------------------------
+      // Rotation: rotL (longitude spin), rotP (latitude tilt, clamped to ±π/2).
+      // Zoom: multiplier on base radius; 1 = default, clamped on wheel.
+      let rotL = 0,
+        rotP = 0,
+        zoom = 1;
+
+      function project(lat, lon) {
+        const lamb = (lon * Math.PI) / 180 + rotL;
+        const phi = (lat * Math.PI) / 180;
+        const cosP = Math.cos(phi);
+        const x = cosP * Math.sin(lamb);
+        const y = Math.sin(phi);
+        const z = cosP * Math.cos(lamb);
+        const sp = Math.sin(rotP),
+          cp = Math.cos(rotP);
+        const y2 = cp * y - sp * z;
+        const z2 = sp * y + cp * z;
+        return { x: cx + R * x, y: cy - R * y2, visible: z2 > 0 };
+      }
+
+      function unproject(px, py) {
+        const sx = (px - cx) / R,
+          sy = -(py - cy) / R;
+        const rho2 = sx * sx + sy * sy;
+        if (rho2 > 1) return null;
+        const z2 = Math.sqrt(1 - rho2);
+        const sp = Math.sin(rotP),
+          cp = Math.cos(rotP);
+        const y = cp * sy + sp * z2;
+        const z = -sp * sy + cp * z2;
+        const lat = (Math.asin(y) * 180) / Math.PI;
+        const lon = ((Math.atan2(sx, z) - rotL) * 180) / Math.PI;
+        return { lat, lon: ((lon + 540) % 360) - 180 };
+      }
+
+      // ---- country borders ----------------------------------------------------
+      // countryBorders: GeoJSON MultiLineString decoded from world-atlas topojson.
+      let countryBorders = null;
+
+      async function loadCountries() {
+        try {
+          const topo = await fetch(
+            "https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json",
+          ).then((r) => r.json());
+          // mesh() with no filter returns all edges (coastlines + borders).
+          countryBorders = topojson.mesh(topo, topo.objects.countries);
+          drawGlobe();
+        } catch (e) {
+          console.warn("country borders load failed:", e);
+        }
+      }
+
+      function drawCountries() {
+        if (!countryBorders) return;
+        gctx.strokeStyle = "rgba(180, 210, 255, 0.55)";
+        gctx.lineWidth = 0.6;
+        for (const ring of countryBorders.coordinates) {
+          gctx.beginPath();
+          let pen = false;
+          for (const [lon, lat] of ring) {
+            const p = project(lat, lon);
+            if (!p.visible) {
+              pen = false;
+              continue;
+            }
+            if (!pen) {
+              gctx.moveTo(p.x, p.y);
+              pen = true;
+            } else gctx.lineTo(p.x, p.y);
+          }
+          gctx.stroke();
+        }
+      }
+
+      // ---- globe + graticule --------------------------------------------------
+      function drawGlobe() {
+        gctx.clearRect(0, 0, W, H);
+        gctx.fillStyle = "#0a1628";
+        gctx.beginPath();
+        gctx.arc(cx, cy, R, 0, Math.PI * 2);
+        gctx.fill();
+
+        gctx.strokeStyle = "rgba(120, 160, 220, 0.22)";
+        gctx.lineWidth = 1;
+        for (let lat = -80; lat <= 80; lat += 20) drawLatLine(lat);
+        for (let lon = -180; lon < 180; lon += 20) drawLonLine(lon);
+
+        drawCountries();
+
+        gctx.strokeStyle = "rgba(120, 160, 220, 0.55)";
+        gctx.lineWidth = 1;
+        gctx.beginPath();
+        gctx.arc(cx, cy, R, 0, Math.PI * 2);
+        gctx.stroke();
+      }
+
+      function drawLatLine(lat) {
         gctx.beginPath();
         let pen = false;
-        for (const [lon, lat] of ring) {
+        for (let lon = -180; lon <= 180; lon += 2) {
           const p = project(lat, lon);
-          if (!p.visible) { pen = false; continue; }
-          if (!pen) { gctx.moveTo(p.x, p.y); pen = true; }
-          else gctx.lineTo(p.x, p.y);
+          if (!p.visible) {
+            pen = false;
+            continue;
+          }
+          if (!pen) {
+            gctx.moveTo(p.x, p.y);
+            pen = true;
+          } else gctx.lineTo(p.x, p.y);
         }
         gctx.stroke();
       }
-    }
-
-    // ---- globe + graticule --------------------------------------------------
-    function drawGlobe() {
-      gctx.clearRect(0, 0, W, H);
-      gctx.fillStyle = "#0a1628";
-      gctx.beginPath();
-      gctx.arc(cx, cy, R, 0, Math.PI * 2);
-      gctx.fill();
-
-      gctx.strokeStyle = "rgba(120, 160, 220, 0.22)";
-      gctx.lineWidth = 1;
-      for (let lat = -80; lat <= 80; lat += 20) drawLatLine(lat);
-      for (let lon = -180; lon < 180; lon += 20) drawLonLine(lon);
-
-      drawCountries();
-
-      gctx.strokeStyle = "rgba(120, 160, 220, 0.55)";
-      gctx.lineWidth = 1;
-      gctx.beginPath();
-      gctx.arc(cx, cy, R, 0, Math.PI * 2);
-      gctx.stroke();
-    }
-
-    function drawLatLine(lat) {
-      gctx.beginPath();
-      let pen = false;
-      for (let lon = -180; lon <= 180; lon += 2) {
-        const p = project(lat, lon);
-        if (!p.visible) { pen = false; continue; }
-        if (!pen) { gctx.moveTo(p.x, p.y); pen = true; }
-        else gctx.lineTo(p.x, p.y);
+      function drawLonLine(lon) {
+        gctx.beginPath();
+        let pen = false;
+        for (let lat = -90; lat <= 90; lat += 2) {
+          const p = project(lat, lon);
+          if (!p.visible) {
+            pen = false;
+            continue;
+          }
+          if (!pen) {
+            gctx.moveTo(p.x, p.y);
+            pen = true;
+          } else gctx.lineTo(p.x, p.y);
+        }
+        gctx.stroke();
       }
-      gctx.stroke();
-    }
-    function drawLonLine(lon) {
-      gctx.beginPath();
-      let pen = false;
-      for (let lat = -90; lat <= 90; lat += 2) {
-        const p = project(lat, lon);
-        if (!p.visible) { pen = false; continue; }
-        if (!pen) { gctx.moveTo(p.x, p.y); pen = true; }
-        else gctx.lineTo(p.x, p.y);
+
+      // ---- wind grid ----------------------------------------------------------
+      let grid = null;
+
+      async function loadWind(date) {
+        const url = date ? `/weather/${date}` : "/weather/current";
+        hud.innerHTML = `<b>wind · v0.1</b> — loading ${date || "current"}…`;
+        try {
+          const r = await fetch(url);
+          if (!r.ok) throw new Error(r.status + " " + r.statusText);
+          const d = await r.json();
+          grid = {
+            header: d.header,
+            u: Float32Array.from(d.u),
+            v: Float32Array.from(d.v),
+          };
+          const h = grid.header;
+          hud.innerHTML = `<b>wind · v0.1</b> — ${h.refTime}z · ${h.nx}×${h.ny} @ ${h.dx}°`;
+          spawnParticles(cfg.count);
+        } catch (e) {
+          hud.textContent = "wind load failed: " + e.message;
+        }
       }
-      gctx.stroke();
-    }
 
-    // ---- wind grid ----------------------------------------------------------
-    let grid = null;
-
-    async function loadWind() {
-      try {
-        const r = await fetch("/weather/current");
-        if (!r.ok) throw new Error(r.status + " " + r.statusText);
-        const d = await r.json();
-        grid = {
-          header: d.header,
-          u: Float32Array.from(d.u),
-          v: Float32Array.from(d.v),
-        };
+      // bilinear sample of (u, v) at (lat, lon) in degrees. returns null off-grid.
+      function sampleWind(lat, lon) {
+        if (!grid) return null;
         const h = grid.header;
-        hud.innerHTML = `<b>wind · v0.1</b> — ${h.refTime}z · ${h.nx}×${h.ny} @ ${h.dx}°`;
-        spawnParticles(3500);
-      } catch (e) {
-        hud.textContent = "wind load failed: " + e.message;
+        const lonN = ((lon % 360) + 360) % 360;
+        let ix = (lonN - h.lo1) / h.dx;
+        ix = ((ix % h.nx) + h.nx) % h.nx;
+        const iy = (h.la1 - lat) / h.dy;
+        if (iy < 0 || iy > h.ny - 1) return null;
+        const ix0 = Math.floor(ix) | 0,
+          iy0 = Math.floor(iy) | 0;
+        const fx = ix - ix0,
+          fy = iy - iy0;
+        const ix1 = (ix0 + 1) % h.nx;
+        const iy1 = Math.min(iy0 + 1, h.ny - 1);
+        const nx = h.nx;
+        const a = iy0 * nx + ix0,
+          b = iy0 * nx + ix1;
+        const c = iy1 * nx + ix0,
+          d = iy1 * nx + ix1;
+        const u =
+          (grid.u[a] * (1 - fx) + grid.u[b] * fx) * (1 - fy) +
+          (grid.u[c] * (1 - fx) + grid.u[d] * fx) * fy;
+        const v =
+          (grid.v[a] * (1 - fx) + grid.v[b] * fx) * (1 - fy) +
+          (grid.v[c] * (1 - fx) + grid.v[d] * fx) * fy;
+        return [u, v];
       }
-    }
 
-    // bilinear sample of (u, v) at (lat, lon) in degrees. returns null off-grid.
-    function sampleWind(lat, lon) {
-      if (!grid) return null;
-      const h = grid.header;
-      const lonN = ((lon % 360) + 360) % 360;
-      let ix = (lonN - h.lo1) / h.dx;
-      ix = ((ix % h.nx) + h.nx) % h.nx;
-      const iy = (h.la1 - lat) / h.dy;
-      if (iy < 0 || iy > h.ny - 1) return null;
-      const ix0 = Math.floor(ix) | 0, iy0 = Math.floor(iy) | 0;
-      const fx = ix - ix0, fy = iy - iy0;
-      const ix1 = (ix0 + 1) % h.nx;
-      const iy1 = Math.min(iy0 + 1, h.ny - 1);
-      const nx = h.nx;
-      const a = iy0 * nx + ix0, b = iy0 * nx + ix1;
-      const c = iy1 * nx + ix0, d = iy1 * nx + ix1;
-      const u = (grid.u[a] * (1 - fx) + grid.u[b] * fx) * (1 - fy)
-        + (grid.u[c] * (1 - fx) + grid.u[d] * fx) * fy;
-      const v = (grid.v[a] * (1 - fx) + grid.v[b] * fx) * (1 - fy)
-        + (grid.v[c] * (1 - fx) + grid.v[d] * fx) * fy;
-      return [u, v];
-    }
+      // ---- particles ----------------------------------------------------------
+      const cfg = { count: 27000, speed: 0.005, fade: 0.93, maxAge: 130 };
+      let particles = [];
 
-    // ---- particles ----------------------------------------------------------
-    let particles = [];
-
-    function randomParticle() {
-      return {
-        lat: Math.random() * 170 - 85,
-        lon: Math.random() * 360 - 180,
-        age: 0,
-        maxAge: 50 + (Math.random() * 80) | 0,
-      };
-    }
-    function spawnParticles(n) {
-      particles = new Array(n);
-      for (let i = 0; i < n; i++) particles[i] = randomParticle();
-    }
-
-    function tick() {
-      // fade existing trails by multiplying alpha.
-      fctx.globalCompositeOperation = "destination-in";
-      fctx.fillStyle = "rgba(0, 0, 0, 0.93)";
-      fctx.fillRect(0, 0, W, H);
-      fctx.globalCompositeOperation = "source-over";
-      fctx.strokeStyle = "rgba(255, 255, 255, 0.75)";
-      fctx.lineWidth = 1;
-
-      const SPEED = 0.005;
-
-      for (let i = 0; i < particles.length; i++) {
-        const p = particles[i];
-        const before = project(p.lat, p.lon);
-        const wind = sampleWind(p.lat, p.lon);
-        if (!wind) { particles[i] = randomParticle(); continue; }
-
-        const cosLat = Math.max(0.1, Math.cos(p.lat * Math.PI / 180));
-        p.lon += wind[0] * SPEED / cosLat;
-        p.lat += wind[1] * SPEED;
-        p.age++;
-
-        if (p.age > p.maxAge || p.lat > 89 || p.lat < -89) {
-          particles[i] = randomParticle();
-          continue;
-        }
-        if (p.lon > 180) p.lon -= 360;
-        else if (p.lon < -180) p.lon += 360;
-
-        const after = project(p.lat, p.lon);
-        if (before.visible && after.visible) {
-          fctx.beginPath();
-          fctx.moveTo(before.x, before.y);
-          fctx.lineTo(after.x, after.y);
-          fctx.stroke();
-        }
+      function randomParticle() {
+        return {
+          lat: Math.random() * 170 - 85,
+          lon: Math.random() * 360 - 180,
+          age: 0,
+          maxAge: ((cfg.maxAge * 0.4) + Math.random() * (cfg.maxAge * 0.6)) | 0,
+        };
       }
-      requestAnimationFrame(tick);
-    }
+      function spawnParticles(n) {
+        particles = new Array(n);
+        for (let i = 0; i < n; i++) particles[i] = randomParticle();
+      }
 
-    // ---- drag to rotate -----------------------------------------------------
-    let drag = null;
-    flow.addEventListener("mousedown", e => {
-      drag = { x: e.clientX, y: e.clientY, rotL0: rotL, rotP0: rotP };
-      flow.classList.add("dragging");
-    });
-    window.addEventListener("mousemove", e => {
-      if (!drag) return;
-      const k = 0.005;
-      rotL = drag.rotL0 + (e.clientX - drag.x) * k;
-      rotP = Math.max(-Math.PI / 2, Math.min(Math.PI / 2,
-        drag.rotP0 + (e.clientY - drag.y) * k));
-      drawGlobe();
-      // clear trails on rotate — they're stale against the new projection.
-      fctx.clearRect(0, 0, W, H);
-    });
-    window.addEventListener("mouseup", () => {
-      drag = null; flow.classList.remove("dragging");
-    });
+      function tick() {
+        // fade existing trails by multiplying alpha.
+        fctx.globalCompositeOperation = "destination-in";
+        fctx.fillStyle = `rgba(0, 0, 0, ${cfg.fade})`;
+        fctx.fillRect(0, 0, W, H);
+        fctx.globalCompositeOperation = "source-over";
+        fctx.strokeStyle = "rgba(255, 255, 255, 0.75)";
+        fctx.lineWidth = 1;
 
-    // ---- wheel to zoom ------------------------------------------------------
-    flow.addEventListener("wheel", e => {
-      e.preventDefault();
-      const factor = Math.exp(-e.deltaY * 0.001);
-      zoom = Math.max(0.3, Math.min(8, zoom * factor));
-      R = Math.min(W, H) * 0.45 * zoom;
-      drawGlobe();
-      fctx.clearRect(0, 0, W, H);
-    }, { passive: false });
+        const SPEED = cfg.speed;
 
-    // ---- kickoff ------------------------------------------------------------
-    resize();
-    loadCountries();
-    loadWind();
-    tick();
-  </script>
-</body>
+        for (let i = 0; i < particles.length; i++) {
+          const p = particles[i];
+          const before = project(p.lat, p.lon);
+          const wind = sampleWind(p.lat, p.lon);
+          if (!wind) {
+            particles[i] = randomParticle();
+            continue;
+          }
 
+          const cosLat = Math.max(0.1, Math.cos((p.lat * Math.PI) / 180));
+          p.lon += (wind[0] * SPEED) / cosLat;
+          p.lat += wind[1] * SPEED;
+          p.age++;
+
+          if (p.age > p.maxAge || p.lat > 89 || p.lat < -89) {
+            particles[i] = randomParticle();
+            continue;
+          }
+          if (p.lon > 180) p.lon -= 360;
+          else if (p.lon < -180) p.lon += 360;
+
+          const after = project(p.lat, p.lon);
+          if (before.visible && after.visible) {
+            fctx.beginPath();
+            fctx.moveTo(before.x, before.y);
+            fctx.lineTo(after.x, after.y);
+            fctx.stroke();
+          }
+        }
+        requestAnimationFrame(tick);
+      }
+
+      // ---- drag to rotate -----------------------------------------------------
+      let drag = null;
+      flow.addEventListener("mousedown", (e) => {
+        drag = { x: e.clientX, y: e.clientY, rotL0: rotL, rotP0: rotP };
+        flow.classList.add("dragging");
+      });
+      window.addEventListener("mousemove", (e) => {
+        if (!drag) return;
+        const k = 0.005;
+        rotL = drag.rotL0 + (e.clientX - drag.x) * k;
+        rotP = Math.max(
+          -Math.PI / 2,
+          Math.min(Math.PI / 2, drag.rotP0 + (e.clientY - drag.y) * k),
+        );
+        drawGlobe();
+        // clear trails on rotate — they're stale against the new projection.
+        fctx.clearRect(0, 0, W, H);
+      });
+      window.addEventListener("mouseup", () => {
+        drag = null;
+        flow.classList.remove("dragging");
+      });
+
+      // ---- wheel to zoom ------------------------------------------------------
+      flow.addEventListener(
+        "wheel",
+        (e) => {
+          e.preventDefault();
+          const factor = Math.exp(-e.deltaY * 0.001);
+          zoom = Math.max(0.3, Math.min(8, zoom * factor));
+          R = Math.min(W, H) * 0.45 * zoom;
+          drawGlobe();
+          fctx.clearRect(0, 0, W, H);
+        },
+        { passive: false },
+      );
+
+      // ---- control panel ------------------------------------------------------
+      const $ = (id) => document.getElementById(id);
+
+      // Date picker → YYYYMMDD (server format). Default to yesterday.
+      const today = new Date();
+      today.setDate(today.getDate() - 1);
+      $("date").value = today.toISOString().slice(0, 10);
+
+      $("load").addEventListener("click", () => {
+        const v = $("date").value;
+        if (!v) return;
+        loadWind(v.replaceAll("-", ""));
+      });
+      $("loadCurrent").addEventListener("click", () => loadWind());
+
+      function bindSlider(id, key, fmt) {
+        const el = $(id),
+          out = $(id + "Val");
+        out.textContent = fmt(cfg[key]);
+        el.addEventListener("input", () => {
+          cfg[key] = parseFloat(el.value);
+          out.textContent = fmt(cfg[key]);
+          if (key === "count" && grid) spawnParticles(cfg.count);
+        });
+      }
+      bindSlider("count", "count", (v) => v.toFixed(0));
+      bindSlider("speed", "speed", (v) => v.toFixed(4));
+      bindSlider("fade", "fade", (v) => v.toFixed(2));
+      bindSlider("age", "maxAge", (v) => v.toFixed(0));
+
+      // ---- kickoff ------------------------------------------------------------
+      resize();
+      loadCountries();
+      loadWind();
+      tick();
+    </script>
+  </body>
 </html>
