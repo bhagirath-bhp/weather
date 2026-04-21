@@ -79,7 +79,8 @@ func downloadMetCycle(date, cycle, metDir string) (string, error) {
 	}
 	template := "https://nomads.ncep.noaa.gov/cgi-bin/filter_gdas_0p25.pl?dir=/gdas.%s/%s/atmos&file=gdas.t%sz.pgrb2.0p25.f000&var_UGRD=on&var_VGRD=on&lev_10_m_above_ground=on"
 	url := fmt.Sprintf(template, safeDate, safeCycle, safeCycle)
-	resp, err := http.Get(url)
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Get(url)
 	if err != nil {
 		return "", err
 	}
