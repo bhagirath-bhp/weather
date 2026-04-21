@@ -4,6 +4,6 @@
     { "src": "index.html", "use": "@vercel/static" }
   ],
   "rewrites": [
-    { "source": "/weather/:path*", "destination": "/api/weather?path=:path*" }
+    { "source": "/weather/:path*", "destination": "/api/weather.go?path=:path*" }
   ]
 }
