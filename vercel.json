@@ -3,7 +3,8 @@
     { "src": "api/weather.go", "use": "@vercel/go" },
     { "src": "public/**", "use": "@vercel/static" }
   ],
-  "rewrites": [
-    { "source": "/weather/:path*", "destination": "/api/weather?path=:path*" }
+  "routes": [
+    { "src": "/weather/(.*)", "dest": "/api/weather?path=$1" },
+    { "src": "/(.*)", "dest": "/public/$1" }
   ]
 }
