@@ -13,7 +13,10 @@ import (
 
 func main() {
 	_ = godotenv.Load()
-	metDir := "/home/loki/useful/projects/weather/_ignore_/metfiles/"
+	metDir := os.Getenv("MET_DIR")
+	if metDir == "" {
+		metDir = "./_ignore_/metfiles/"
+	}
 	http.HandleFunc("/weather/{date}", handlers.ServeWeather(metDir))
 	http.HandleFunc("/weather/current", handlers.ServeCurrentWeather(metDir))
 	http.Handle("/", http.FileServer(http.Dir("./public")))
