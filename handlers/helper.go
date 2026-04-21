@@ -151,6 +151,32 @@ func ExtractUVFromGrib(gribPath string) (WindHeader, []float64, []float64, error
 	return header, uData, vData, nil
 }
 
+// subsampleWind decimates U/V by `stride` in both axes so the JSON response
+// fits under Vercel's ~4.5MB serverless response limit. Full GDAS 0.25° grids
+// (~1M points × 2 floats) exceed the limit; stride=4 yields a 1° grid.
+func subsampleWind(h WindHeader, u, v []float64, stride int) (WindHeader, []float64, []float64) {
+	if stride <= 1 {
+		return h, u, v
+	}
+	s := uint32(stride)
+	newNx := (h.Nx + s - 1) / s
+	newNy := (h.Ny + s - 1) / s
+	outU := make([]float64, 0, newNx*newNy)
+	outV := make([]float64, 0, newNx*newNy)
+	for y := uint32(0); y < h.Ny; y += s {
+		row := y * h.Nx
+		for x := uint32(0); x < h.Nx; x += s {
+			outU = append(outU, u[row+x])
+			outV = append(outV, v[row+x])
+		}
+	}
+	h.Nx = newNx
+	h.Ny = newNy
+	h.Dx *= float64(stride)
+	h.Dy *= float64(stride)
+	return h, outU, outV
+}
+
 // writeWind encodes resp to the response and, for debugging, also mirrors
 // it to {metDir}/debug-{refTime}.json via MultiWriter (single pass, no
 // double marshal). Debug write failures are ignored — they must not break
@@ -206,6 +232,7 @@ func ServeWeather(metDir string) http.HandlerFunc {
 			return
 		}
 		header.RefTime = date
+		header, u, v = subsampleWind(header, u, v, 4)
 		writeWind(w, metDir, WindResponse{Header: header, U: u, V: v}, 3600)
 	}
 }
@@ -223,6 +250,7 @@ func ServeCurrentWeather(metDir string) http.HandlerFunc {
 				continue
 			}
 			header.RefTime = c.Date + c.Cycle
+			header, u, v = subsampleWind(header, u, v, 4)
 			writeWind(w, metDir, WindResponse{Header: header, U: u, V: v}, 600)
 			return
 		}
