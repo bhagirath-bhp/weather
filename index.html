@@ -137,6 +137,11 @@
     <div class="panel">
       <h4>cycle</h4>
       <div class="row">
+        <label>stride</label>
+        <input type="range" id="stride" min="1" max="16" step="1" value="4" />
+        <span class="val" id="strideVal">4 · 1°</span>
+      </div>
+      <div class="row">
         <input type="date" id="date" />
         <button id="load">load</button>
       </div>
@@ -337,8 +342,10 @@
       let grid = null;
 
       async function loadWind(date) {
-        const url = date ? `/weather/${date}` : "/weather/current";
-        hud.innerHTML = `<b>wind · v0.1</b> — loading ${date || "current"}…`;
+        const stride = parseInt(document.getElementById("stride").value, 10);
+        const base = date ? `/weather/${date}` : "/weather/current";
+        const url = `${base}?stride=${stride}`;
+        hud.innerHTML = `<b>wind · v0.1</b> — loading ${date || "current"} (stride ${stride})…`;
         try {
           const r = await fetch(url);
           if (!r.ok) throw new Error(r.status + " " + r.statusText);
@@ -496,6 +503,13 @@
         loadWind(v.replaceAll("-", ""));
       });
       $("loadCurrent").addEventListener("click", () => loadWind());
+
+      // Stride is read at fetch time; show resolution next to the slider.
+      const fmtDeg = (v) => v.toFixed(2).replace(/\.?0+$/, "");
+      $("stride").addEventListener("input", () => {
+        const s = parseInt($("stride").value, 10);
+        $("strideVal").textContent = `${s} · ${fmtDeg(0.25 * s)}°`;
+      });
 
       function bindSlider(id, key, fmt) {
         const el = $(id),
