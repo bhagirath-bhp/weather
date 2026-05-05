@@ -232,7 +232,7 @@ func ServeWeather(metDir string) http.HandlerFunc {
 			return
 		}
 		header.RefTime = date
-		header, u, v = subsampleWind(header, u, v, 4)
+		header, u, v = subsampleWind(header, u, v, 1)
 		writeWind(w, metDir, WindResponse{Header: header, U: u, V: v}, 3600)
 	}
 }
@@ -250,7 +250,7 @@ func ServeCurrentWeather(metDir string) http.HandlerFunc {
 				continue
 			}
 			header.RefTime = c.Date + c.Cycle
-			header, u, v = subsampleWind(header, u, v, 4)
+			header, u, v = subsampleWind(header, u, v, 1)
 			writeWind(w, metDir, WindResponse{Header: header, U: u, V: v}, 600)
 			return
 		}
