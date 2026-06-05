@@ -17,6 +17,7 @@ func main() {
 	if metDir == "" {
 		metDir = "./_ignore_/metfiles/"
 	}
+	// hiii
 	http.HandleFunc("/weather/{date}", handlers.ServeWeather(metDir))
 	http.HandleFunc("/weather/current", handlers.ServeCurrentWeather(metDir))
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

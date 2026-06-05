@@ -7,10 +7,28 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/nilsmagnus/grib/griblib"
 )
+
+// parseStride reads a `stride` query value, clamped to [1, 16].
+// Defaults to 4 (0.25° × 4 = 1°) — fits comfortably in Vercel's
+// ~4.5MB serverless response limit. stride=1 will exceed it.
+func parseStride(s string) int {
+	if s == "" {
+		return 4
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 {
+		return 4
+	}
+	if n > 16 {
+		return 16
+	}
+	return n
+}
 
 type WindHeader struct {
 	RefTime string  `json:"refTime"`
@@ -228,11 +246,11 @@ func ServeWeather(metDir string) http.HandlerFunc {
 			return
 		}
 		if u == nil || v == nil {
-			http.Error(w, "U/V components missing from GRIB", http.StatusInternalServerError)
+			http.Error(w, "U/V components missing from GRIB:", http.StatusInternalServerError)
 			return
 		}
 		header.RefTime = date
-		header, u, v = subsampleWind(header, u, v, 1)
+		header, u, v = subsampleWind(header, u, v, parseStride(r.URL.Query().Get("stride")))
 		writeWind(w, metDir, WindResponse{Header: header, U: u, V: v}, 3600)
 	}
 }
@@ -250,7 +268,7 @@ func ServeCurrentWeather(metDir string) http.HandlerFunc {
 				continue
 			}
 			header.RefTime = c.Date + c.Cycle
-			header, u, v = subsampleWind(header, u, v, 1)
+			header, u, v = subsampleWind(header, u, v, parseStride(r.URL.Query().Get("stride")))
 			writeWind(w, metDir, WindResponse{Header: header, U: u, V: v}, 600)
 			return
 		}
