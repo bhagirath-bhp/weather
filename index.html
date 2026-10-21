@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>wind · v0.1</title>
+    <title>wind · GDAS 10 m wind globe</title>
     <style>
       html,
       body {
@@ -120,6 +120,35 @@
         color: #cfe0ff;
       }
 
+      .legend {
+        position: fixed;
+        right: 12px;
+        bottom: 12px;
+        width: 180px;
+        font: 11px/1.3 ui-monospace, Menlo, Consolas, monospace;
+        color: #8ab0e6;
+        pointer-events: none;
+      }
+      .legend .bar {
+        height: 6px;
+        border-radius: 2px;
+        background: linear-gradient(90deg, #5b7fb3, #cfe0ff, #ffd166, #ff6b35);
+      }
+      .legend .ticks {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 3px;
+      }
+      .panel .src {
+        font-size: 11px;
+        color: #8ab0e6;
+        line-height: 1.5;
+      }
+      .panel .src a {
+        color: #cfe0ff;
+        text-decoration: none;
+        border-bottom: 1px dotted #8ab0e6;
+      }
       .panel hr {
         border: 0;
         border-top: 1px solid rgba(120, 160, 220, 0.18);
@@ -133,13 +162,17 @@
       <canvas id="globe"></canvas>
       <canvas id="flow"></canvas>
     </div>
-    <div class="hud" id="hud"><b>wind · v0.1</b> — loading…</div>
+    <div class="hud" id="hud"><b>wind</b> — loading latest GDAS cycle…</div>
+    <div class="legend" id="legend">
+      <div class="bar"></div>
+      <div class="ticks"><span>0</span><span>10</span><span>20</span><span>30+ m/s</span></div>
+    </div>
     <div class="panel">
       <h4>cycle</h4>
       <div class="row">
         <label>stride</label>
-        <input type="range" id="stride" min="1" max="16" step="1" value="4" />
-        <span class="val" id="strideVal">4 · 1°</span>
+        <input type="range" id="stride" min="1" max="16" step="1" value="1" />
+        <span class="val" id="strideVal">1 · 0.25°</span>
       </div>
       <div class="row">
         <input type="date" id="date" />
@@ -169,6 +202,13 @@
         <label>max age</label>
         <input type="range" id="age" min="20" max="300" step="10" value="130" />
         <span class="val" id="ageVal">130</span>
+      </div>
+      <hr />
+      <h4>source</h4>
+      <div class="src">
+        NOAA <a href="https://nomads.ncep.noaa.gov/" target="_blank" rel="noopener">GDAS 0.25°</a> analysis, 10 m U/V,
+        f000 · Go on Vercel · full 1440×721 grid as gzipped int16 ·
+        <a href="https://github.com/bhagirath-bhp/weather" target="_blank" rel="noopener">github</a>
       </div>
     </div>
     <!-- topojson-client for decoding world-atlas borders -->
@@ -341,22 +381,49 @@
       // ---- wind grid ----------------------------------------------------------
       let grid = null;
 
+      // Wire format (see handlers/helper.go writeWind): "WND2" | uint32 hlen |
+      // JSON header (even length) | int16 u[nx*ny] | int16 v[nx*ny], LE.
+      // Each row is delta-coded (first value, then differences from the west
+      // neighbour) in int16 arithmetic; 0.01 m/s per unit after decoding.
+      const WIND_SCALE = 100;
+      function undelta(src, nx, out) {
+        let prev = 0;
+        for (let i = 0; i < src.length; i++) {
+          if (i % nx === 0) prev = 0;
+          prev = ((prev + src[i]) << 16) >> 16; // wrap to int16
+          out[i] = prev / WIND_SCALE;
+        }
+      }
+      function parseWind(buf) {
+        const dv = new DataView(buf);
+        const magic = String.fromCharCode(...new Uint8Array(buf, 0, 4));
+        if (magic !== "WND2") throw new Error("bad magic " + magic);
+        const hlen = dv.getUint32(4, true);
+        const header = JSON.parse(
+          new TextDecoder().decode(new Uint8Array(buf, 8, hlen)),
+        );
+        const n = header.nx * header.ny;
+        const off = 8 + hlen; // even, so Int16Array alignment holds
+        const u = new Float32Array(n),
+          v = new Float32Array(n);
+        undelta(new Int16Array(buf, off, n), header.nx, u);
+        undelta(new Int16Array(buf, off + n * 2, n), header.nx, v);
+        return { header, u, v };
+      }
       async function loadWind(date) {
         const stride = parseInt(document.getElementById("stride").value, 10);
         const base = date ? `/weather/${date}` : "/weather/current";
-        const url = `${base}?stride=${stride}`;
-        hud.innerHTML = `<b>wind · v0.1</b> — loading ${date || "current"} (stride ${stride})…`;
+        const url = stride > 1 ? `${base}?stride=${stride}` : base;
+        hud.innerHTML = `<b>wind</b> — fetching GDAS ${date || "latest"} from NOMADS, extracting 10 m U/V${stride > 1 ? ` (stride ${stride})` : ""}…`;
         try {
+          const t0 = performance.now();
           const r = await fetch(url);
-          if (!r.ok) throw new Error(r.status + " " + r.statusText);
-          const d = await r.json();
-          grid = {
-            header: d.header,
-            u: Float32Array.from(d.u),
-            v: Float32Array.from(d.v),
-          };
+          if (!r.ok) throw new Error(r.status + " " + (await r.text()));
+          grid = parseWind(await r.arrayBuffer());
           const h = grid.header;
-          hud.innerHTML = `<b>wind · v0.1</b> — ${h.refTime}z · ${h.nx}×${h.ny} @ ${h.dx}°`;
+          const ms = (performance.now() - t0).toFixed(0);
+          const ref = `${h.refTime.slice(0, 4)}-${h.refTime.slice(4, 6)}-${h.refTime.slice(6, 8)} ${h.refTime.slice(8) || "00"}z`;
+          hud.innerHTML = `<b>wind</b> — GDAS 0.25° · ${ref} · f000 · ${h.nx}×${h.ny} @ ${h.dx}° · ${ms} ms`;
           spawnParticles(cfg.count);
         } catch (e) {
           hud.textContent = "wind load failed: " + e.message;
@@ -394,6 +461,22 @@
 
       // ---- particles ----------------------------------------------------------
       const cfg = { count: 27000, speed: 0.005, fade: 0.93, maxAge: 130 };
+      // Speed buckets (m/s) and colours; must match the legend gradient.
+      const SPEED_EDGES = [2, 5, 10, 15, 20, 30];
+      const SPEED_COLORS = [
+        "rgba(91, 127, 179, 0.55)",
+        "rgba(140, 170, 220, 0.65)",
+        "rgba(207, 224, 255, 0.75)",
+        "rgba(255, 230, 160, 0.8)",
+        "rgba(255, 209, 102, 0.85)",
+        "rgba(255, 150, 70, 0.9)",
+        "rgba(255, 107, 53, 0.95)",
+      ];
+      function speedBucket(sp) {
+        let b = 0;
+        while (b < SPEED_EDGES.length && sp >= SPEED_EDGES[b]) b++;
+        return b;
+      }
       let particles = [];
 
       function randomParticle() {
@@ -415,11 +498,11 @@
         fctx.fillStyle = `rgba(0, 0, 0, ${cfg.fade})`;
         fctx.fillRect(0, 0, W, H);
         fctx.globalCompositeOperation = "source-over";
-        fctx.strokeStyle = "rgba(255, 255, 255, 0.75)";
         fctx.lineWidth = 1;
-
         const SPEED = cfg.speed;
-
+        // One Path2D per speed bucket → one stroke() call per colour instead
+        // of one per particle.
+        const paths = SPEED_COLORS.map(() => new Path2D());
         for (let i = 0; i < particles.length; i++) {
           const p = particles[i];
           const before = project(p.lat, p.lon);
@@ -443,11 +526,14 @@
 
           const after = project(p.lat, p.lon);
           if (before.visible && after.visible) {
-            fctx.beginPath();
-            fctx.moveTo(before.x, before.y);
-            fctx.lineTo(after.x, after.y);
-            fctx.stroke();
+            const path = paths[speedBucket(Math.hypot(wind[0], wind[1]))];
+            path.moveTo(before.x, before.y);
+            path.lineTo(after.x, after.y);
           }
+        }
+        for (let b = 0; b < paths.length; b++) {
+          fctx.strokeStyle = SPEED_COLORS[b];
+          fctx.stroke(paths[b]);
         }
         requestAnimationFrame(tick);
       }

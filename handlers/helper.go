@@ -1,34 +1,22 @@
 package handlers
 
 import (
+	"bufio"
+	"compress/gzip"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/nilsmagnus/grib/griblib"
 )
-
-// parseStride reads a `stride` query value, clamped to [1, 16].
-// Defaults to 4 (0.25° × 4 = 1°) — fits comfortably in Vercel's
-// ~4.5MB serverless response limit. stride=1 will exceed it.
-func parseStride(s string) int {
-	if s == "" {
-		return 4
-	}
-	n, err := strconv.Atoi(s)
-	if err != nil || n < 1 {
-		return 4
-	}
-	if n > 16 {
-		return 16
-	}
-	return n
-}
 
 type WindHeader struct {
 	RefTime string  `json:"refTime"`
@@ -169,9 +157,9 @@ func ExtractUVFromGrib(gribPath string) (WindHeader, []float64, []float64, error
 	return header, uData, vData, nil
 }
 
-// subsampleWind decimates U/V by `stride` in both axes so the JSON response
-// fits under Vercel's ~4.5MB serverless response limit. Full GDAS 0.25° grids
-// (~1M points × 2 floats) exceed the limit; stride=4 yields a 1° grid.
+// subsampleWind decimates U/V by `stride` in both axes. Kept for the JSON
+// format and low-bandwidth clients; the default int16 binary format carries
+// the full grid (stride 1). stride=4 yields a 1° grid.
 func subsampleWind(h WindHeader, u, v []float64, stride int) (WindHeader, []float64, []float64) {
 	if stride <= 1 {
 		return h, u, v
@@ -195,28 +183,92 @@ func subsampleWind(h WindHeader, u, v []float64, stride int) (WindHeader, []floa
 	return h, outU, outV
 }
 
-// writeWind encodes resp to the response and, for debugging, also mirrors
-// it to {metDir}/debug-{refTime}.json via MultiWriter (single pass, no
-// double marshal). Debug write failures are ignored — they must not break
-// the request.
-func writeWind(w http.ResponseWriter, metDir string, resp WindResponse, maxAge int) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", maxAge))
+// Scale for the int16 wire format: 0.01 m/s per unit (±327 m/s range).
+const windScale = 100
 
-	var dest io.Writer = w
-	// Sanitise refTime to alphanumerics only before embedding it in a file path.
-	safeRef := make([]byte, 0, len(resp.Header.RefTime))
-	for _, c := range resp.Header.RefTime {
-		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
-			safeRef = append(safeRef, byte(c))
+// writeWind picks the wire format from ?format= (default "bin").
+//
+// "bin" packs the grid as int16 so the FULL 0.25° GDAS grid (1440×721×2
+// components ≈ 4.15 MB raw) fits under Vercel's 4.5 MB serverless response
+// limit without decimation. Each row is delta-coded (value minus its west
+// neighbour, int16 wraparound) before gzip: neighbouring cells differ by a
+// few hundredths of a m/s, so the deltas are small and compress far better
+// than the raw values (≈3.0 MB → ≈2.3 MB gzipped). Layout, little-endian:
+//
+//	"WND2"            4 bytes  magic + version
+//	hlen              uint32   byte length of the JSON header (padded even)
+//	header            hlen     JSON WindHeader, space-padded to even length
+//	u                 nx*ny    int16 row deltas, row-major north→south, west→east
+//	v                 nx*ny    int16 row deltas
+//
+// "json" is the original float64 JSON object (large; use with ?stride=).
+func writeWind(w http.ResponseWriter, r *http.Request, resp WindResponse, maxAge int) {
+	w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", maxAge))
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	var out io.Writer = w
+	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Vary", "Accept-Encoding")
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		out = gz
+	}
+
+	if r.URL.Query().Get("format") == "json" {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(out).Encode(resp)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	hdr, _ := json.Marshal(resp.Header)
+	if len(hdr)%2 == 1 {
+		hdr = append(hdr, ' ')
+	}
+	bw := bufio.NewWriterSize(out, 64<<10)
+	defer bw.Flush()
+	bw.WriteString("WND2")
+	binary.Write(bw, binary.LittleEndian, uint32(len(hdr)))
+	bw.Write(hdr)
+	writeInt16Deltas(bw, resp.U, int(resp.Header.Nx))
+	writeInt16Deltas(bw, resp.V, int(resp.Header.Nx))
+}
+
+// writeInt16Deltas quantises vals to int16 (×windScale) and writes each row
+// as first value followed by successive differences. Differences are taken
+// in int16 arithmetic so the decoder's wrapping add reconstructs exactly.
+func writeInt16Deltas(bw *bufio.Writer, vals []float64, nx int) {
+	var b [2]byte
+	var prev int16
+	for i, f := range vals {
+		x := math.Round(f * windScale)
+		if x > math.MaxInt16 {
+			x = math.MaxInt16
+		} else if x < math.MinInt16 {
+			x = math.MinInt16
 		}
+		q := int16(x)
+		if i%nx == 0 {
+			prev = 0
+		}
+		binary.LittleEndian.PutUint16(b[:], uint16(q-prev))
+		bw.Write(b[:])
+		prev = q
 	}
-	debugPath := filepath.Join(metDir, "debug-"+string(safeRef)+".json")
-	if f, err := os.Create(debugPath); err == nil {
-		defer f.Close()
-		dest = io.MultiWriter(w, f)
+}
+
+// strideFrom reads ?stride= (1..16, default 1). Stride 1 is the full grid;
+// the int16 format fits it under Vercel's limit, so decimation is optional.
+func strideFrom(r *http.Request) int {
+	n, err := strconv.Atoi(r.URL.Query().Get("stride"))
+	if err != nil || n < 1 {
+		return 1
 	}
-	json.NewEncoder(dest).Encode(resp)
+	if n > 16 {
+		return 16
+	}
+	return n
 }
 
 func ServeWeather(metDir string) http.HandlerFunc {
@@ -250,8 +302,8 @@ func ServeWeather(metDir string) http.HandlerFunc {
 			return
 		}
 		header.RefTime = date
-		header, u, v = subsampleWind(header, u, v, parseStride(r.URL.Query().Get("stride")))
-		writeWind(w, metDir, WindResponse{Header: header, U: u, V: v}, 3600)
+		header, u, v = subsampleWind(header, u, v, strideFrom(r))
+		writeWind(w, r, WindResponse{Header: header, U: u, V: v}, 3600)
 	}
 }
 
@@ -268,8 +320,8 @@ func ServeCurrentWeather(metDir string) http.HandlerFunc {
 				continue
 			}
 			header.RefTime = c.Date + c.Cycle
-			header, u, v = subsampleWind(header, u, v, parseStride(r.URL.Query().Get("stride")))
-			writeWind(w, metDir, WindResponse{Header: header, U: u, V: v}, 600)
+			header, u, v = subsampleWind(header, u, v, strideFrom(r))
+			writeWind(w, r, WindResponse{Header: header, U: u, V: v}, 600)
 			return
 		}
 		http.Error(w, "no recent cycle available", http.StatusServiceUnavailable)
