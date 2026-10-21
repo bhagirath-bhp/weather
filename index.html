@@ -2,6 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>wind · GDAS 10 m wind globe</title>
     <style>
       html,
@@ -24,6 +25,8 @@
 
       #flow {
         cursor: grab;
+        /* let pointer events own touch: no browser pan/pinch on the canvas */
+        touch-action: none;
       }
 
       #flow.dragging {
@@ -538,13 +541,38 @@
         requestAnimationFrame(tick);
       }
 
-      // ---- drag to rotate -----------------------------------------------------
-      let drag = null;
-      flow.addEventListener("mousedown", (e) => {
-        drag = { x: e.clientX, y: e.clientY, rotL0: rotL, rotP0: rotP };
-        flow.classList.add("dragging");
+      // ---- drag to rotate, pinch to zoom (pointer events: mouse + touch) ----
+      const pointers = new Map(); // pointerId → {x, y}
+      let drag = null; // one-finger rotate
+      let pinch = null; // two-finger zoom
+      function setZoom(z) {
+        zoom = Math.max(0.3, Math.min(8, z));
+        R = Math.min(W, H) * 0.45 * zoom;
+        drawGlobe();
+        fctx.clearRect(0, 0, W, H);
+      }
+      function pinchDist() {
+        const [a, b] = [...pointers.values()];
+        return Math.hypot(a.x - b.x, a.y - b.y);
+      }
+      flow.addEventListener("pointerdown", (e) => {
+        flow.setPointerCapture(e.pointerId);
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pointers.size === 1) {
+          drag = { x: e.clientX, y: e.clientY, rotL0: rotL, rotP0: rotP };
+          flow.classList.add("dragging");
+        } else if (pointers.size === 2) {
+          drag = null;
+          pinch = { d0: pinchDist(), zoom0: zoom };
+        }
       });
-      window.addEventListener("mousemove", (e) => {
+      flow.addEventListener("pointermove", (e) => {
+        if (!pointers.has(e.pointerId)) return;
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pinch && pointers.size === 2) {
+          setZoom(pinch.zoom0 * (pinchDist() / pinch.d0));
+          return;
+        }
         if (!drag) return;
         const k = 0.005;
         rotL = drag.rotL0 + (e.clientX - drag.x) * k;
@@ -556,21 +584,27 @@
         // clear trails on rotate — they're stale against the new projection.
         fctx.clearRect(0, 0, W, H);
       });
-      window.addEventListener("mouseup", () => {
-        drag = null;
-        flow.classList.remove("dragging");
-      });
+      function endPointer(e) {
+        pointers.delete(e.pointerId);
+        pinch = null;
+        if (pointers.size === 1) {
+          // lifted one finger of a pinch: continue as a drag from the other
+          const [p] = pointers.values();
+          drag = { x: p.x, y: p.y, rotL0: rotL, rotP0: rotP };
+        } else {
+          drag = null;
+          flow.classList.remove("dragging");
+        }
+      }
+      flow.addEventListener("pointerup", endPointer);
+      flow.addEventListener("pointercancel", endPointer);
 
       // ---- wheel to zoom ------------------------------------------------------
       flow.addEventListener(
         "wheel",
         (e) => {
           e.preventDefault();
-          const factor = Math.exp(-e.deltaY * 0.001);
-          zoom = Math.max(0.3, Math.min(8, zoom * factor));
-          R = Math.min(W, H) * 0.45 * zoom;
-          drawGlobe();
-          fctx.clearRect(0, 0, W, H);
+          setZoom(zoom * Math.exp(-e.deltaY * 0.001));
         },
         { passive: false },
       );
